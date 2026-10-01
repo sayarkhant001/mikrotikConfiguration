@@ -9,7 +9,7 @@ param(
     [int]$UserCapacity = 0,
     [string]$RouterIP = "",
     [string]$RouterUser = "admin",
-    [string]$RouterPass = "",
+    [string]$RouterPass = "Khant1234@",
     [switch]$AutoExecute,
     [switch]$SkipDeviceModeCheck
 )
@@ -215,8 +215,9 @@ if ([string]::IsNullOrWhiteSpace($RouterIP)) {
     if ([string]::IsNullOrWhiteSpace($RouterIP)) { $RouterIP = "192.168.88.1" }
 }
 
-if ([string]::IsNullOrWhiteSpace($RouterPass)) {
-    $RouterPass = Read-Host "  Enter Router Admin Password [Press ENTER if blank]"
+$InputPass = Read-Host "  Enter Router Admin Password [Press ENTER for default 'Khant1234@']"
+if (-not [string]::IsNullOrWhiteSpace($InputPass)) {
+    $RouterPass = $InputPass
 }
 
 # ── 2. DOWNLOAD OR LOAD LOCAL ASSETS ──────────────────────────
@@ -285,6 +286,7 @@ $HeaderConfig = @"
 :global siteName "$SiteName"
 :global wifiSsid "$Ssid"
 :global dnsName "$DnsName"
+:global adminPass "$RouterPass"
 :global ipCapacity $($Subnet.Capacity)
 
 "@
@@ -471,4 +473,6 @@ Write-Host "  - Hardware  : $hwModel (ROS $rosVersion)" -ForegroundColor Cyan
 Write-Host "  - SSID      : $Ssid" -ForegroundColor Cyan
 Write-Host "  - DNS Portal: http://$DnsName" -ForegroundColor Cyan
 Write-Host "  - Capacity  : $($Subnet.Capacity) users on $($Subnet.Network)" -ForegroundColor Cyan
+Write-Host "  - Admin User: admin | Admin Pass: $RouterPass" -ForegroundColor Cyan
+Write-Host "  - Remote VPN: WireGuard UDP port 13231 (Cloud DDNS Enabled)" -ForegroundColor Cyan
 Write-Host "`nUniversal Deployment completed successfully!`n" -ForegroundColor Green

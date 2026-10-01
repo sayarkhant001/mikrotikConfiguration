@@ -3,6 +3,8 @@
 #     Compatible with RouterOS v6.x, v7.x | All Hardware Models & Architectures
 # ==============================================================================
 # This script sets up a complete MikroTik Hotspot & Captive Portal system:
+# - Safety Backup: Creates timestamped .backup and .rsc before touching config
+# - Admin Password: Set to 'Khant1234@' by default
 # - Hardware & Storage auto-detection (flash/ vs root)
 # - RouterOS v7 device-mode safety & auto-updater
 # - WAN DHCP Client & NAT Masquerade (ether1)
@@ -12,6 +14,9 @@
 # - Hotspot Server, HTML directory, and profile setup
 # - 5 Standard User Profiles (5GB, 30Day, 2GB, 2Hour, VIP) - No pre-imported vouchers
 # - API port 8728 enabled & Walled Garden for HotspotManager app
+# - Fast CNA (Captive Network Assistant) popup for Apple, Android & Windows
+# - Ghost Lease Auto-Cleanup Scheduler (removes stale leases every 30m)
+# - Remote Management: Cloud DDNS & WireGuard VPN (Port 13231)
 # ==============================================================================
 
 :put "=========================================================="
@@ -31,7 +36,17 @@
 :put ("Free Memory    : " . ($freeMem / 1024 / 1024) . " MB")
 :put ("Free Disk Space: " . ($freeHdd / 1024 / 1024) . " MB")
 
-# ── 2. DEVICE-MODE SAFETY CHECK (RouterOS v7.13+) ─────────────
+# ── 2. PRE-SETUP SAFETY BACKUP ────────────────────────────────
+:put "--- Step 0: Creating Safety Backup & Export ---"
+:do {
+  /system backup save name="auto-backup-before-setup"
+  /export file="auto-export-before-setup"
+  :put "  Safety backup created: auto-backup-before-setup.backup"
+} on-error={
+  :put "  Backup note: Skipped or insufficient storage."
+}
+
+# ── 3. DEVICE-MODE SAFETY CHECK (RouterOS v7.13+) ─────────────
 :do {
   :local dmHotspot [/system device-mode get hotspot]
   :local dmFetch [/system device-mode get fetch]
@@ -53,7 +68,7 @@
   :put "  Device-Mode: Not applicable on this RouterOS version (Legacy/Standard mode)"
 }
 
-# ── 3. PARAMETERS (Can be passed via globals or defaults) ───────
+# ── 4. PARAMETERS & CREDENTIALS ───────────────────────────────
 :global siteName
 :if ([:len $siteName] = 0) do={ :set siteName "YadanarTun_WiFi" }
 
@@ -63,13 +78,22 @@
 :global dnsName
 :if ([:len $dnsName] = 0) do={ :set dnsName "yadanartun.wifi" }
 
+:global adminPass
+:if ([:len $adminPass] = 0) do={ :set adminPass "Khant1234@" }
+
 :global ipCapacity
 :if ([:len $ipCapacity] = 0) do={ :set ipCapacity 250 }
 :local ipCount [:tonum $ipCapacity]
 :if ($ipCount < 10) do={ :set ipCount 250 }
 :if ($ipCount > 10000) do={ :set ipCount 10000 }
 
-# ── 4. DYNAMIC SUBNET & IP POOL CALCULATION (10 - 10,000 IPs) ─
+# Apply default admin password
+:do {
+  /user set [find name="admin"] password=$adminPass
+  :put ("Admin Password set to: " . $adminPass)
+} on-error={}
+
+# ── 5. DYNAMIC SUBNET & IP POOL CALCULATION (10 - 10,000 IPs) ─
 :local prefix 24
 :local netmask "255.255.255.0"
 :local netCidr "10.10.10.0/24"
@@ -155,17 +179,17 @@
 :put ("Gateway IP     : " . $gwIp)
 :put ("DHCP Pool      : " . $poolStart . " - " . $poolEnd . " (Lease: " . $leaseTime . ")")
 
-# ── 5. STORAGE DIRECTORY DETECTION ────────────────────────────
+# ── 6. STORAGE DIRECTORY DETECTION ────────────────────────────
 :local hsDir "hotspot"
 :if ([:len [/file find name="flash"]] > 0 or [:len [/file find name="flash/hotspot"]] > 0) do={
   :set hsDir "flash/hotspot"
 }
 :put ("Portal Storage : " . $hsDir)
 
-# ── 6. SYSTEM IDENTITY ────────────────────────────────────────
+# ── 7. SYSTEM IDENTITY ────────────────────────────────────────
 :do { /system identity set name=($siteName . "-Router") } on-error={}
 
-# ── 7. WAN INTERFACE (ether1) & NAT MASQUERADE ────────────────
+# ── 8. WAN INTERFACE (ether1) & NAT MASQUERADE ────────────────
 :put "--- Step 1: Configuring WAN (ether1) & NAT ---"
 :do {
   /ip dhcp-client add interface=ether1 disabled=no comment="WAN Client"
@@ -183,7 +207,7 @@
   :do { /ip firewall nat set [find comment~"WAN.*Masquerade"] out-interface-list=WAN action=masquerade } on-error={}
 }
 
-# ── 8. UNIVERSAL LAN BRIDGE & DYNAMIC PORT ASSIGNMENT ──────────
+# ── 9. UNIVERSAL LAN BRIDGE & DYNAMIC PORT ASSIGNMENT ──────────
 :put "--- Step 2: Configuring Universal LAN Bridge ---"
 :do { /interface bridge add name=hotspot-bridge } on-error={}
 :do { /interface list member add list=LAN interface=hotspot-bridge } on-error={}
@@ -218,7 +242,7 @@
 # Disable FastPath to ensure captive portal packet interception is 100% active
 :do { /interface bridge settings set allow-fast-path=no } on-error={}
 
-# ── 9. WI-FI CONFIGURATION (ROS v7 wifi vs legacy wireless) ───
+# ── 10. WI-FI CONFIGURATION (ROS v7 wifi vs legacy wireless) ──
 :put "--- Step 3: Configuring Wi-Fi Hardware ---"
 :local wifiConfigured false
 
@@ -248,7 +272,7 @@
   :put "  [INFO] No internal Wi-Fi found. Bridge ports 2..N ready for external APs (Ruijie Reyee, UniFi, etc.)."
 }
 
-# ── 10. IP ADDRESSING & DHCP SERVER ───────────────────────────
+# ── 11. IP ADDRESSING & DHCP SERVER ───────────────────────────
 :put "--- Step 4: IP Address, Pool & DHCP ---"
 :local fullGwAddr ($gwIp . "/" . $prefix)
 
@@ -288,7 +312,7 @@
   }
 }
 
-# ── 11. HOTSPOT SERVER PROFILE & SERVER ────────────────────────
+# ── 12. HOTSPOT SERVER PROFILE & SERVER ────────────────────────
 :put "--- Step 5: Hotspot Server & Captive Portal ---"
 :do {
   /ip hotspot profile add name=hs-profile hotspot-address=$gwIp dns-name=$dnsName html-directory=$hsDir \
@@ -306,8 +330,26 @@
   :do { /ip hotspot set [find name=hs-server] interface=hotspot-bridge address-pool=hs-pool profile=hs-profile disabled=no } on-error={}
 }
 
-# ── 12. STANDARD USER PROFILES (No Preconfigured Accounts) ────
-:put "--- Step 6: User Profiles (Empty Vouchers Structure) ---"
+# ── 13. FAST CNA (APPLE / ANDROID / WINDOWS) POPUP ────────────
+:put "--- Step 6: Captive Network Assistant (CNA) Optimization ---"
+:local cnaList {"captive.apple.com"; "hotspot.cisco.com"; "appleiphonecell.com"; "connectivitycheck.gstatic.com"; "connectivitycheck.android.com"; "clients3.google.com"; "msftconnecttest.com"}
+:foreach host in=$cnaList do={
+  :do {
+    /ip hotspot walled-garden add dst-host=$host action=allow comment="Fast CNA Detection"
+  } on-error={}
+}
+
+# ── 14. DHCP GHOST LEASE AUTO-CLEANUP ─────────────────────────
+:put "--- Step 7: Stale Lease Cleanup Scheduler ---"
+:do { /system scheduler remove [find name="hs-clean-leases"] } on-error={}
+:do {
+  /system scheduler add name="hs-clean-leases" interval=30m start-time=startup \
+    on-event="/ip dhcp-server lease remove [find where status=\"waiting\" dynamic=yes]" \
+    comment="Purge stale DHCP leases every 30m"
+} on-error={}
+
+# ── 15. STANDARD USER PROFILES (No Preconfigured Accounts) ────
+:put "--- Step 8: User Profiles (Empty Vouchers Structure) ---"
 :local profiles {"5GB"; "30Day"; "2GB"; "2Hour"; "VIP"}
 :foreach prof in=$profiles do={
   :do {
@@ -317,8 +359,8 @@
   }
 }
 
-# ── 13. API SERVICE & WALLED GARDEN (HotspotManager App) ──────
-:put "--- Step 7: Management API & Walled Garden ---"
+# ── 16. API SERVICE & WALLED GARDEN (HotspotManager App) ──────
+:put "--- Step 9: Management API & Walled Garden ---"
 :do { /ip service enable [find name="api"] } on-error={}
 :do { /ip service set [find name="api"] port=8728 } on-error={}
 
@@ -326,8 +368,38 @@
   /ip hotspot walled-garden ip add dst-port=8728 protocol=tcp action=accept comment="Allow HotspotManager App Port 8728"
 } on-error={}
 
+# ── 17. REMOTE MANAGEMENT: CLOUD DDNS & WIREGUARD VPN ─────────
+:put "--- Step 10: Remote Management (Cloud DDNS & WireGuard) ---"
+# 1. Enable MikroTik Cloud DDNS
+:do {
+  /ip cloud set ddns-enabled=yes update-time=yes
+  :put "  Cloud DDNS enabled. Free remote hostname active."
+} on-error={}
+
+# 2. WireGuard Server Setup (RouterOS v7)
+:do {
+  :if ([:len [/interface wireguard find name="wg-remote"]] = 0) do={
+    /interface wireguard add name=wg-remote listen-port=13231 comment="Remote Admin VPN"
+    :put "  WireGuard interface 'wg-remote' created on UDP port 13231."
+  }
+  :do {
+    /ip address add address=10.255.255.1/24 interface=wg-remote comment="WireGuard Gateway"
+  } on-error={}
+  
+  # Allow WireGuard traffic through firewall
+  :do {
+    /ip firewall filter add chain=input dst-port=13231 protocol=udp action=accept place-before=1 comment="Allow WireGuard VPN Port 13231"
+  } on-error={}
+  :do {
+    /ip firewall filter add chain=input src-address=10.255.255.0/24 action=accept place-before=2 comment="Allow WireGuard Admin Subnet"
+  } on-error={}
+} on-error={
+  :put "  WireGuard: Not supported on this RouterOS version (ROS v6)."
+}
+
 :put "=========================================================="
 :put "   PROVISIONING COMPLETED SUCCESSFULLY!                  "
 :put ("   SSID: " . $wifiSsid . " | Portal: http://" . $dnsName)
 :put ("   Capacity: " . $ipCount . " users on " . $netCidr)
+:put ("   Admin User: admin | Admin Pass: " . $adminPass)
 :put "=========================================================="
